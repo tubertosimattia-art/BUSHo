@@ -1,13 +1,35 @@
-from flask import Flask, render_template
-from pathlib import Path
+from __future__ import annotations
+
 import csv
-import json
 import os
+from pathlib import Path
+
+from flask import Flask, render_template
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
 
-def load_demo_route():
+def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    import math
+
+    radius = 6371.0
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    delta_phi = math.radians(lat2 - lat1)
+    delta_lambda = math.radians(lon2 - lon1)
+
+    a = (
+        math.sin(delta_phi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
+    )
+    return 2 * radius * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def get_route_name(route: dict) -> str:
+    return route.get("route_short_name") or route.get("route_long_name") or "GTFS"
+
+
+def load_demo_route() -> dict:
     return {
         "mode": "demo",
         "notice": "MODALITÀ DEMO: nessun GTFS ufficiale caricato. I dati sono un prototipo locale per test UI e logica di navigazione.",
@@ -46,7 +68,7 @@ def load_demo_route():
                             [41.9023, 12.4156],
                             [41.9008, 12.4132],
                             [41.8993, 12.4107],
-                            [41.8979, 12.4082]
+                            [41.8979, 12.4082],
                         ],
                         "stops": [
                             {"id": "S1", "name": "Piazza Venezia", "lat": 41.8944, "lon": 12.4733, "sequence": 1},
@@ -58,7 +80,7 @@ def load_demo_route():
                             {"id": "S7", "name": "Ponte Milvio", "lat": 41.9130, "lon": 12.4439, "sequence": 7},
                             {"id": "S8", "name": "Tiburtina", "lat": 41.9103, "lon": 12.4317, "sequence": 8},
                             {"id": "S9", "name": "Trastevere Sud", "lat": 41.9023, "lon": 12.4156, "sequence": 9},
-                            {"id": "S10", "name": "Trastevere", "lat": 41.8979, "lon": 12.4082, "sequence": 10}
+                            {"id": "S10", "name": "Trastevere", "lat": 41.8979, "lon": 12.4082, "sequence": 10},
                         ],
                         "instructions": [
                             {"from": "Piazza Venezia", "to": "Via del Corso", "turn": "prosegui dritto"},
@@ -69,8 +91,8 @@ def load_demo_route():
                             {"from": "Via Flaminia", "to": "Ponte Milvio", "turn": "svolta a sinistra"},
                             {"from": "Ponte Milvio", "to": "Tiburtina", "turn": "tenere la destra"},
                             {"from": "Tiburtina", "to": "Trastevere Sud", "turn": "prosegui dritto"},
-                            {"from": "Trastevere Sud", "to": "Trastevere", "turn": "svolta a sinistra"}
-                        ]
+                            {"from": "Trastevere Sud", "to": "Trastevere", "turn": "svolta a sinistra"},
+                        ],
                     },
                     {
                         "id": "outbound",
@@ -96,7 +118,7 @@ def load_demo_route():
                             [41.9005, 12.4688],
                             [41.8985, 12.4701],
                             [41.8967, 12.4718],
-                            [41.8944, 12.4733]
+                            [41.8944, 12.4733],
                         ],
                         "stops": [
                             {"id": "S10", "name": "Trastevere", "lat": 41.8979, "lon": 12.4082, "sequence": 1},
@@ -108,7 +130,7 @@ def load_demo_route():
                             {"id": "S4", "name": "Via del Babuino", "lat": 41.9039, "lon": 12.4646, "sequence": 7},
                             {"id": "S3", "name": "Piazza Colonna", "lat": 41.8996, "lon": 12.4674, "sequence": 8},
                             {"id": "S2", "name": "Via del Corso", "lat": 41.8969, "lon": 12.4699, "sequence": 9},
-                            {"id": "S1", "name": "Piazza Venezia", "lat": 41.8944, "lon": 12.4733, "sequence": 10}
+                            {"id": "S1", "name": "Piazza Venezia", "lat": 41.8944, "lon": 12.4733, "sequence": 10},
                         ],
                         "instructions": [
                             {"from": "Trastevere", "to": "Trastevere Sud", "turn": "prosegui dritto"},
@@ -119,20 +141,20 @@ def load_demo_route():
                             {"from": "Piazza del Popolo", "to": "Via del Babuino", "turn": "prosegui dritto"},
                             {"from": "Via del Babuino", "to": "Piazza Colonna", "turn": "tenere la destra"},
                             {"from": "Piazza Colonna", "to": "Via del Corso", "turn": "prosegui dritto"},
-                            {"from": "Via del Corso", "to": "Piazza Venezia", "turn": "svolta a destra"}
-                        ]
-                    }
-                ]
+                            {"from": "Via del Corso", "to": "Piazza Venezia", "turn": "svolta a destra"},
+                        ],
+                    },
+                ],
             }
-        ]
+        ],
     }
 
 
-def load_gtfs_route():
-    """Load GTFS data from a local data/gtfs folder if provided.
+def load_gtfs_route() -> dict | None:
+    """Load GTFS data only if official files are placed in data/gtfs.
 
-    The app is ready for real GTFS imports, but does not claim to have real
-    official Rome data unless the files are placed in the expected folder.
+    This function does not invent missing values. If the folder is absent or
+    incomplete, it returns None and the UI stays in demo mode.
     """
     base_dir = Path(__file__).resolve().parent
     gtfs_dir = base_dir / "data" / "gtfs"
@@ -145,75 +167,76 @@ def load_gtfs_route():
 
     try:
         routes = {}
-        with open(gtfs_dir / "routes.txt", newline="", encoding="utf-8") as f:
-            for row in csv.DictReader(f):
-                routes[row["route_id"]] = row
+        with open(gtfs_dir / "routes.txt", newline="", encoding="utf-8") as handle:
+            for row in csv.DictReader(handle):
+                route_id = row.get("route_id")
+                if route_id:
+                    routes[route_id] = row
 
-        trips = {}
-        with open(gtfs_dir / "trips.txt", newline="", encoding="utf-8") as f:
-            for row in csv.DictReader(f):
-                trips[row["trip_id"]] = row
-
-        stops = {}
-        with open(gtfs_dir / "stops.txt", newline="", encoding="utf-8") as f:
-            for row in csv.DictReader(f):
-                stops[row["stop_id"]] = {
-                    "id": row["stop_id"],
-                    "name": row.get("stop_name", row["stop_id"]),
-                    "lat": float(row["stop_lat"]),
-                    "lon": float(row["stop_lon"]),
-                }
-
-        stop_times = {}
-        with open(gtfs_dir / "stop_times.txt", newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                stop_times.setdefault(row["trip_id"], []).append({
-                    "stop_id": row["stop_id"],
-                    "arrival": row.get("arrival_time", "00:00:00"),
-                    "departure": row.get("departure_time", "00:00:00"),
-                    "sequence": int(row.get("stop_sequence", 0)),
-                })
-
-        line_id = next(iter(routes.keys()), None)
-        if not line_id:
+        if not routes:
             return None
 
-        route_data = {
+        stops = {}
+        with open(gtfs_dir / "stops.txt", newline="", encoding="utf-8") as handle:
+            for row in csv.DictReader(handle):
+                stop_id = row.get("stop_id")
+                if stop_id:
+                    try:
+                        stops[stop_id] = {
+                            "id": stop_id,
+                            "name": row.get("stop_name", stop_id),
+                            "lat": float(row["stop_lat"]),
+                            "lon": float(row["stop_lon"]),
+                        }
+                    except (KeyError, ValueError):
+                        continue
+
+        stop_times = {}
+        with open(gtfs_dir / "stop_times.txt", newline="", encoding="utf-8") as handle:
+            for row in csv.DictReader(handle):
+                trip_id = row.get("trip_id")
+                stop_id = row.get("stop_id")
+                if not trip_id or not stop_id:
+                    continue
+                stop_times.setdefault(trip_id, []).append({
+                    "stop_id": stop_id,
+                    "sequence": int(row.get("stop_sequence", 0) or 0),
+                })
+
+        route_variants = []
+        for route_id, route in routes.items():
+            selected_stops = []
+            for trip_id, sequence in stop_times.items():
+                ordered = sorted(sequence, key=lambda item: int(item["sequence"]))
+                stop_ids = [item["stop_id"] for item in ordered if item["stop_id"] in stops]
+                if stop_ids:
+                    selected_stops = [stops[stop_id] for stop_id in stop_ids[:25]]
+                    break
+            if not selected_stops:
+                continue
+
+            route_variants.append({
+                "id": f"{route_id}-primary",
+                "direction": route.get("route_long_name") or route.get("route_short_name") or route_id,
+                "path": [[stop["lat"], stop["lon"]] for stop in selected_stops],
+                "stops": selected_stops,
+                "instructions": [],
+            })
+
+        if not route_variants:
+            return None
+
+        return {
             "mode": "gtfs",
-            "notice": "Dati GTFS caricati. La navigazione reale richiede GTFS completo e coordinate stradali accurate.",
+            "notice": "Dati GTFS caricati: la navigazione reale richiede una geometria stradale valida in shapes.txt e supporto GPS del browser.",
             "lines": [{
-                "id": line_id,
-                "name": f"Linea {route_data_name(routes[line_id]) or line_id}",
-                "variants": [{
-                    "id": "gtfs-primary",
-                    "direction": routes[line_id].get("route_short_name", line_id),
-                    "path": [],
-                    "stops": []
-                }]
-            }]
+                "id": route_variants[0]["id"],
+                "name": f"Linea {get_route_name(routes[next(iter(routes))])}",
+                "variants": route_variants,
+            }],
         }
-
-        gtfs_stops = []
-        for trip_id, stop_list in stop_times.items():
-            ordered = sorted(stop_list, key=lambda s: int(s["sequence"]))
-            gtfs_stops.extend([stops[item["stop_id"]] for item in ordered if item["stop_id"] in stops])
-            if gtfs_stops:
-                break
-
-        route_data["lines"][0]["variants"][0]["stops"] = gtfs_stops[:20]
-        if gtfs_stops:
-            route_data["lines"][0]["variants"][0]["path"] = [
-                [stop["lat"], stop["lon"]] for stop in gtfs_stops[:20]
-            ]
-
-        return route_data
-    except (KeyError, ValueError, OSError):
+    except (OSError, ValueError, csv.Error):
         return None
-
-
-def route_data_name(route):
-    return route.get("route_short_name") or route.get("route_long_name") or "GTFS"
 
 
 @app.route("/")
@@ -222,6 +245,11 @@ def index():
     return render_template("index.html", route_json=route)
 
 
+@app.route("/health")
+def health():
+    return {"status": "ok", "mode": "demo" if not load_gtfs_route() else "gtfs"}, 200
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
